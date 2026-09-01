@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fund Integrity Monitor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234c8dff'/%3E%3Cpath d='M16 6l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10v-6z' fill='%23fff' opacity='.92'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/crab-game.css" />
+</head>
+<body>
+  <div class="shell">
+    <!-- ============================================================ sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3l7 3v6c0 5-3.4 8.6-7 9.5C8.4 20.6 5 17 5 12V6l7-3Z"/>
+            <path d="m9 12 2 2 4-4.5"/>
+          </svg>
+        </span>
+        <div class="brand-text">
+          <strong>Fund Integrity</strong>
+          <span>Monitor</span>
+        </div>
+      </div>
+
+      <nav class="side-nav" role="tablist" aria-label="Sections">
+        <button class="side-tab active" data-tab="activity" role="tab" aria-selected="true">
+          <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2.5-7 5 14L16 12h6"/></svg>
+          <span class="nav-label">Activity tracker</span>
+        </button>
+        <button class="side-tab" data-tab="flags" role="tab" aria-selected="false">
+          <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 5h13l-3 4 3 4H5"/></svg>
+          <span class="nav-label">Review queue</span>
+          <span class="side-badge" id="side-flags-badge" hidden>0</span>
+        </button>
+        <button class="side-tab" data-tab="audit" role="tab" aria-selected="false">
+          <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.4 8.6-7 9.5C8.4 20.6 5 17 5 12V6l7-3Z"/><path d="m9 12 2 2 4-4.5"/></svg>
+          <span class="nav-label">Audit trail</span>
+        </button>
+        <button class="side-tab" data-tab="metrics" role="tab" aria-selected="false">
+          <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="20" x2="5" y2="11"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="19" y1="20" x2="19" y2="14"/></svg>
+          <span class="nav-label">Honest metrics</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="crab-strip" data-crab-game title="Just a fun little crab. Carry on."></div>
+        <p class="sidebar-note">Defence-only monitoring. Every flag is a prompt for a human review, never a decision.</p>
+      </div>
+    </aside>
+
+    <!-- ============================================================ main -->
+    <div class="main-col">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 id="page-title">Activity tracker</h1>
+          <p class="sub" id="scan-meta">loading…</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="chain" id="chain-status" title="Audit chain verification">audit chain: …</span>
+          <button class="icon-btn" id="bell-btn" aria-label="Open review queue" title="Open flags">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>
+            <span class="badge" id="bell-badge" hidden>0</span>
+          </button>
+          <button id="run-scan" class="btn primary">Run scan</button>
+        </div>
+      </header>
+
+      <main>
+        <!-- ------------------------------------------------ activity -->
+        <section class="panel active" id="tab-activity">
+          <div class="kpi-row" id="tiles"></div>
+
+          <div class="dash-grid">
+            <div class="dash-col-main">
+              <div class="section-card">
+                <div class="section-head">
+                  <h2>Needs review</h2>
+                  <button class="section-link" data-goto="flags">View all →</button>
+                </div>
+                <div class="alert-row" id="top-flags"></div>
+              </div>
+
+              <div class="section-card">
+                <div class="section-head"><h2>Employees</h2></div>
+                <div class="toolbar">
+                  <div class="search-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+                    <input id="search" type="search" placeholder="Search name, role or store…" />
+                  </div>
+                  <div class="filters" id="status-filters">
+                    <button class="chip active" data-status="">All</button>
+                    <button class="chip" data-status="flagged">Flagged</button>
+                    <button class="chip" data-status="watch">Watch</button>
+                    <button class="chip" data-status="clear">Clear</button>
+                    <button class="chip" data-status="insufficient_data">Not scored</button>
+                  </div>
+                </div>
+                <div class="grid" id="employee-grid"></div>
+                <p class="empty" id="employee-empty" hidden>No employees match this filter.</p>
+              </div>
+            </div>
+
+            <div class="dash-col-side">
+              <div class="section-card">
+                <div class="section-head"><h2>Risk distribution</h2></div>
+                <div id="status-chart"></div>
+              </div>
+
+              <div class="section-card">
+                <div class="section-head">
+                  <h2>Active now</h2>
+                  <span class="live-dot" aria-hidden="true"></span>
+                </div>
+                <div class="active-list" id="active-list"></div>
+              </div>
+
+              <div class="section-card">
+                <div class="section-head"><h2>Recent activity</h2></div>
+                <div class="activity-feed" id="recent-feed"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ------------------------------------------------ flags -->
+        <section class="panel" id="tab-flags">
+          <div class="toolbar">
+            <div class="filters" id="flag-filters">
+              <button class="chip active" data-state="">All flags</button>
+              <button class="chip" data-state="open">Open</button>
+              <button class="chip" data-state="reviewed">Reviewed</button>
+            </div>
+          </div>
+          <div id="flag-list" class="stack"></div>
+        </section>
+
+        <!-- ------------------------------------------------ audit -->
+        <section class="panel" id="tab-audit">
+          <div class="note" id="audit-verification"></div>
+          <div class="table-wrap">
+            <table class="table" id="audit-table">
+              <thead>
+                <tr><th>#</th><th>when</th><th>actor</th><th>action</th><th>entity</th><th>detail</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ------------------------------------------------ metrics -->
+        <section class="panel" id="tab-metrics">
+          <div id="metrics-body"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>
+          Defence-only monitoring. Every flag is a prompt for a human review, never a
+          decision. Scores are statistical deviations, not findings of wrongdoing.
+        </p>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------ detail drawer -->
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <aside class="drawer" id="drawer" hidden aria-label="Employee detail">
+    <button class="drawer-close" id="drawer-close" aria-label="Close">&times;</button>
+    <div id="drawer-body"></div>
+  </aside>
+
+  <script src="/static/crab-game.js" defer></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

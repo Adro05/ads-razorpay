@@ -1,0 +1,62 @@
+# Internal Fund Integrity Monitor - runtime configuration
+# Every number here is a policy decision, not a magic constant. Changing a
+# threshold changes who gets flagged, so changes belong in version control.
+
+data:
+  events_csv: data/events.csv
+  db_path: data/fim.db
+  ground_truth_json: data/ground_truth.json   # synthetic data only; never in prod
+
+window:
+  window_days: 7          # the scoring window ("what happened recently")
+  baseline_days: 28       # trailing history used to build each employee's own baseline
+  active_minutes: 45      # last action newer than this => employee shown as "active"
+  idle_hours: 12          # newer than this but not active => "idle"; older => "off shift"
+
+business_hours:
+  start_hour: 8           # inclusive, local store time
+  end_hour: 21            # exclusive
+  # Timestamps are treated as naive local store time. If you operate across
+  # timezones, normalise upstream before ingest.
+
+thresholds:
+  min_events_for_scoring: 15      # below this, we report "insufficient data", never a flag
+  min_refunds_for_concentration: 4
+  min_peer_group: 4               # below this we widen the peer group (store -> role)
+  allow_cross_role_peers: false   # never compare a returns clerk with a cashier
+  z_cap: 6.0                      # z of >= this maps to a 100 on that component
+  min_reason_z: 2.0               # below this a deviation is not reportable, so not flaggable
+  flag_score: 70                  # composite risk score at which status becomes "flagged"
+  watch_score: 50                 # ...and at which it becomes "watch"
+
+scoring:
+  weights:                # renormalised over whichever components are available
+    peer: 0.45
+    self: 0.30
+    isolation_forest: 0.25
+  top_k_reasons: 3
+  isolation_forest:
+    n_estimators: 200
+    random_state: 7
+    min_samples: 8        # fewer employees than this => skip the model, use z-scores only
+    score_scale: 0.15     # outlier margin that maps to a full 100 on this component
+
+# Which behavioural features feed the model. Disabling one removes it from both
+# the score and the explanations.
+features:
+  enabled:
+    - refund_rate
+    - refund_value_ratio
+    - avg_refund_amount
+    - void_rate
+    - manual_override_rate
+    - discount_rate
+    - avg_discount_pct
+    - off_hours_ratio
+    - recipient_hhi
+    - top_recipient_share
+    - no_original_ratio
+    - repeat_recipient_ratio
+
+review:
+  decisions: [confirmed_issue, cleared, needs_more_info, escalated]

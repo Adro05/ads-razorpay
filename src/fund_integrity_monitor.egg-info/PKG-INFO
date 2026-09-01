@@ -1,0 +1,301 @@
+Metadata-Version: 2.4
+Name: fund-integrity-monitor
+Version: 0.1.0
+Summary: Defence-only anomaly monitoring for staff-initiated financial actions
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.24
+Requires-Dist: scikit-learn>=1.3
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: fastapi>=0.100
+Requires-Dist: uvicorn[standard]>=0.23
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+
+# Internal Fund Integrity Monitor
+
+Detects money quietly leaving a merchant through its own staff — refunds,
+discounts, voids and manual overrides that look like ordinary work one
+transaction at a time, and only become visible in aggregate.
+
+The tool watches **staff-initiated financial actions** tied to an employee ID and
+looks for statistical deviation from two reference points: that employee's own
+recent history, and the peer group doing the same job. Every flag arrives with a
+stated reason, and every flag, review and decision is written to a hash-chained
+audit trail.
+
+It is defence-only. It raises questions for a human to answer; it never takes
+action against anyone.
+
+```
+                 events.csv                     ┌──────────────────────┐
+                     │                          │  Employee activity   │
+                     ▼                          │  tracker (dashboard) │
+  ingest ─► features ─► scoring ─► explain ─►   │  who is handling     │
+             │            │          │          │  funds, and how      │
+             │            │          │          └──────────┬───────────┘
+    per-employee   peer z-score   plain-English            │
+    rolling window self z-score   reason per flag          ▼
+    baselines      isolation forest              review ─► audit trail
+                                                            (hash-chained)
+```
+
+---
+
+## Quick start
+
+```bash
+pip install -r requirements.txt
+
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\demo.ps1
+
+# macOS / Linux
+bash scripts/demo.sh
+```
+
+The demo generates a synthetic 24-person store with four planted bad actors,
+scans it, prints the tracker, runs the evaluation over eight independently
+generated stores, records a review and verifies the audit chain.
+
+Then start the dashboard:
+
+```bash
+python -m fim.cli serve        # http://127.0.0.1:8000
+```
+
+If you have not installed the package, prefix commands with `PYTHONPATH=src`
+(PowerShell: `$env:PYTHONPATH="src"`), or `pip install -e .` once.
+
+---
+
+## The four components
+
+### 1. Employee activity tracker — the merchant-facing surface
+
+`dashboard/` — a dependency-free page served by the API. One card per employee:
+who is handling funds right now (`active` / `idle` / `off shift`), their role and
+store, their risk score out of 100, and the one-line reason behind it. Clicking a
+card opens the full case: ranked reasons with their share of the score, the raw
+feature values, the score components, every flag and review, and the underlying
+transactions.
+
+Four tabs: **Activity tracker**, **Review queue**, **Audit trail**, **Honest metrics**.
+
+### 2. Anomaly scoring engine
+
+`src/fim/features.py`, `src/fim/scoring.py`. Rolling 7-day window against a
+28-day baseline. Twelve features, all rates or shapes rather than raw counts, so
+a busy cashier is never flagged for being busy:
+
+| feature | catches |
+| --- | --- |
+| `refund_rate`, `refund_value_ratio`, `avg_refund_amount` | refund mills, inflated refunds |
+| `void_rate`, `manual_override_rate` | voided sales where the cash never reaches the till |
+| `discount_rate`, `avg_discount_pct` | discount abuse for friends and accomplices |
+| `recipient_hhi`, `top_recipient_share`, `repeat_recipient_ratio` | refunds routed to a small recurring set of "customers" |
+| `no_original_ratio` | refunds with no original sale behind them |
+| `off_hours_ratio` | activity when the store is closed |
+
+Three scores are computed and kept separate, so a flag can always be attributed:
+
+1. **Peer deviation** — robust z-score (median / MAD) against colleagues in the
+   same role, preferring the same store.
+2. **Self deviation** — robust z-score against that employee's own four prior
+   7-day windows. Catches behaviour that changed, even where it still looks
+   normal next to peers.
+3. **Isolation Forest** — unsupervised, over the whole feature vector. Catches
+   odd *combinations* no single feature makes obvious.
+
+The composite is a weighted blend (`config/config.yaml`), renormalised over
+whichever components are available, mapped onto 0–100. `>= 70` flags, `>= 50`
+watches.
+
+**Why not fixed thresholds.** A published rule ("refunds over £200 need a
+manager") is gameable the week after staff learn it. A rule that tracks the
+distribution moves when the person moves. The evaluation below measures exactly
+that claim against a naive fixed rule on the same data.
+
+### 3. Explainability layer
+
+`src/fim/explain.py`. No flag leaves the system without a sentence a merchant
+could read aloud to the employee:
+
+> Over the last 7 days this employee issued 70 refunds against 74 sales (94.6% of
+> sales) versus 32.9% for peers (Returns Desk across all stores).
+> *[peer basis, 37% of score, z = 10.2]*
+
+Each reason states its basis — peers, the employee's own history, or the model —
+because "unusual for you" and "unusual for your role" are different claims with
+different remedies. Contributions are shares of the composite, so a merchant can
+see whether a flag rests on three things or on one twitchy metric. A score that
+clears the threshold but produces no individually reportable deviation is held at
+`watch` rather than raised as an accusation with an empty explanation.
+
+### 4. Audit trail
+
+`src/fim/audit.py`, `src/fim/db.py`. Every scan, flag, review and decision is
+appended to a SQLite log where each entry commits to the SHA-256 of the entry
+before it. `verify()` walks the chain and names the first broken link; triggers
+reject `UPDATE` and `DELETE` on the log outright. The API exposes no endpoint
+that deletes or edits a flag — a test asserts this.
+
+```bash
+python -m fim.cli audit --verify
+python -m fim.cli audit --limit 20 --payload
+```
+
+---
+
+## Honest metrics
+
+```bash
+python scripts/evaluate.py --trials 8
+```
+
+Measured at the thresholds actually shipped in `config/config.yaml`, over eight
+independently generated synthetic stores (32 planted actors, 192 employees):
+
+| metric | precision | recall |
+| --- | --- | --- |
+| flagged | 0.82 (sd 0.14, min 0.67, max 1.00) | 0.69 (sd 0.17, min 0.50, max 1.00) |
+| flagged or watch | 0.55 | 0.75 |
+| naive rule: refund rate > 15% | 0.25 | 0.47 |
+
+Average precision over the ranking: **0.83**. Across the eight stores that is
+22 planted actors caught, 5 false alarms and 10 missed.
+
+**What these numbers are not:**
+
+- Synthetic data with planted patterns this engine was designed around. That is
+  an upper bound, not a forecast of real-world accuracy.
+- 32 planted actors is a small sample. One catch or miss moves recall by a large
+  fraction, which is why the spread is printed rather than a single figure.
+- Thresholds were set by hand and were **not** tuned on held-out data.
+- The `slow_burn` pattern sits near the detection limit deliberately and is
+  caught only about half the time. Which pattern gets missed varies by seed, and
+  it should: catching every one of them would mean the thresholds are too loose,
+  not that the model is good.
+- No real employee was scored to produce any of this.
+
+The hash chain proves internal consistency of the log, not that nobody with
+write access to the file rewrote the whole chain. To claim more, anchor
+`AuditTrail.head()` somewhere the merchant does not control — a daily email, an
+append-only bucket, a notary.
+
+---
+
+## How it avoids accusing innocent people
+
+These are the failure modes that make a tool like this dangerous, and what the
+code does about each:
+
+| failure mode | mitigation |
+| --- | --- |
+| Comparing a returns clerk with a cashier | Peer groups never cross roles (`allow_cross_role_peers: false`). With no valid peer group the peer component is dropped, not faked. |
+| A tightly clustered peer group turning a 1-point difference into a 9σ accusation | Every feature carries a **materiality floor** that acts as a floor on sigma, and a deviation below that floor is never reported. |
+| Four historical windows producing a confident-looking six sigma | z-scores are shrunk towards zero for thin samples. |
+| One colluder dragging the peer average towards themselves | Median and MAD throughout, never mean and standard deviation. |
+| A new or part-time employee scored against nothing | Below `min_events_for_scoring` actions the status is `insufficient_data` — never a flag. |
+| An unexplained red dot | A flag with no reportable reason is downgraded to `watch`. |
+| Quietly deleting an inconvenient flag | Append-only audit log, hash chain, no delete endpoint. |
+
+---
+
+## Command line
+
+```bash
+python -m fim.cli gen-data [--days 56] [--employees 24] [--seed 42]
+python -m fim.cli scan [--as-of ISO8601] [--actor NAME]
+python -m fim.cli report [--flagged-only] [--verbose]
+python -m fim.cli flags [--state open|reviewed]
+python -m fim.cli review --flag flag-xxx --reviewer "R. Mensah" \
+                         --decision cleared --notes "Checked the receipts."
+python -m fim.cli audit [--verify] [--payload] [--limit N]
+python -m fim.cli evaluate
+python -m fim.cli serve [--host 127.0.0.1] [--port 8000]
+```
+
+## API
+
+| method | path | purpose |
+| --- | --- | --- |
+| GET | `/api/overview` | scan metadata, status counts, audit chain verification |
+| GET | `/api/employees` | activity tracker feed (`?status=`, `?role=`, `?store_id=`) |
+| GET | `/api/employees/{id}` | full case: reasons, features, flags, reviews, transactions |
+| GET | `/api/flags` | flags with their reviews (`?state=open|reviewed`) |
+| POST | `/api/flags/{id}/review` | record a human decision (reviewer, decision, notes) |
+| POST | `/api/scan` | run a scan |
+| GET | `/api/audit`, `/api/audit/verify` | audit log and chain verification |
+| GET | `/api/features` | feature catalogue with descriptions and materiality floors |
+| GET | `/api/metrics` | the last evaluation run |
+| GET | `/api/health` | liveness |
+
+Interactive docs at `/docs` while the server is running.
+
+---
+
+## Bringing your own data
+
+Point `data.events_csv` in `config/config.yaml` at a CSV with these columns:
+
+```
+event_id, timestamp, employee_id, employee_name, role, store_id, action_type,
+amount, order_id, customer_ref, payment_method, original_txn_id, discount_pct, note
+```
+
+`action_type` is one of `sale`, `refund`, `discount`, `void`, `manual_override`.
+`sale` rows matter: they are the denominator for nearly every rate. `amount` is
+the value of the action, always positive. `customer_ref` is the counterparty —
+the recipient-concentration features are blind without it. Timestamps are treated
+as naive local store time; normalise upstream if you trade across timezones. Bad
+rows are reported at ingest rather than silently dropped.
+
+---
+
+## Layout
+
+```
+config/config.yaml       thresholds, weights, windows — every policy decision, in one file
+src/fim/
+  ingest.py              CSV -> Event, with problems reported not swallowed
+  features.py            12 features + their materiality floors and explanation templates
+  scoring.py             robust z-scores, peer groups, Isolation Forest, composite
+  explain.py             deviations -> ranked, quotable reasons
+  engine.py              the pipeline, and the only code that writes a flag
+  audit.py               hash-chained append-only log + verification
+  db.py                  SQLite schema and append-only guards
+  api.py                 FastAPI backend
+  cli.py                 command line
+dashboard/               tracker UI (no framework, no CDN, no build step)
+scripts/
+  generate_synthetic_data.py   labelled synthetic store with four planted patterns
+  evaluate.py                  precision/recall/AP + the naive-rule baseline
+  demo.ps1 / demo.sh           end-to-end demo
+  run_api.ps1 / run_api.sh     start the dashboard
+tests/                   36 tests: features, scoring, explanations, audit, API
+```
+
+```bash
+python -m pytest -q
+```
+
+---
+
+## Scope and limits
+
+This is a **detection aid for a human reviewer**, not an accusation engine and
+not an HR system. A high score means "these numbers are unusual and someone
+should look" — nothing more. Statistical deviation has innocent explanations:
+a new returns policy, a seasonal spike, a colleague on leave, a broken terminal.
+
+Deliberately out of scope: no automated discipline, no automated account
+suspension, no covert surveillance of anything other than financial actions
+already recorded by the point-of-sale system, no scoring of protected
+characteristics or anything derived from them, and no keystroke, location or
+personal-device data.
+
+If you deploy this against real staff, tell them it exists and what it measures.
+A monitoring tool nobody has been told about fails for reasons that have nothing
+to do with its precision.
