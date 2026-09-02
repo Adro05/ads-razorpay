@@ -191,24 +191,33 @@ async function loadOverview() {
 
   const c = data.counts || {};
   const tiles = [
-    ["kpi-flag", "alert", c.flagged, "Flagged for review"],
-    ["kpi-watch", "eye", c.watch, "On watch"],
-    ["kpi-clear", "check", c.clear, "Clear"],
-    ["kpi-accent", "bolt", c.active_now, "Handling funds now"],
-    ["kpi-accent", "inbox", c.open_flags, "Flags awaiting a reviewer"],
-    ["kpi-idle", "help", c.insufficient_data, "Too little activity to score"],
+    ["kpi-flag", "alert", c.flagged, "Flagged for review", "flagged"],
+    ["kpi-watch", "eye", c.watch, "On watch", "watch"],
+    ["kpi-clear", "check", c.clear, "Clear", "clear"],
+    ["kpi-accent", "bolt", c.active_now, "Handling funds now", "active_now"],
+    ["kpi-accent", "inbox", c.open_flags, "Flags awaiting a reviewer", "open_flags"],
+    ["kpi-idle", "help", c.insufficient_data, "Too little activity to score", "insufficient_data"],
   ];
   const wrap = $("#tiles");
   wrap.innerHTML = "";
-  tiles.forEach(([cls, icon, value, label]) => {
+  tiles.forEach(([cls, icon, value, label, key]) => {
     const tile = el("div", `kpi-card ${cls}`);
     const iconWrap = el("div", "kpi-icon");
     iconWrap.innerHTML = ICONS[icon];
     tile.append(iconWrap);
-    tile.append(el("div", "kpi-value", value === undefined ? "-" : String(value)));
+    const valueEl = el("div", "kpi-value");
+    tile.append(valueEl);
     tile.append(el("div", "kpi-label", label));
     wrap.append(tile);
+    if (value === undefined) {
+      valueEl.textContent = "-";
+    } else if (window.FimMotion) {
+      FimMotion.animateNumber(valueEl, value, { key: `kpi:${key}` });
+    } else {
+      valueEl.textContent = String(value);
+    }
   });
+  if (window.FimMotion) FimMotion.revealChildren(wrap, ".kpi-card");
 
   const badgeText = c.open_flags ? String(c.open_flags) : "";
   const sideBadge = $("#side-flags-badge");
@@ -237,7 +246,9 @@ function renderStatusChart(c) {
   ].map(([label, value, color]) => ({
     label, color, display: String(value || 0), pct: ((value || 0) / total) * 100,
   }));
-  wrap.append(buildBarChart(rows));
+  const bars = buildBarChart(rows);
+  wrap.append(bars);
+  if (window.FimMotion) FimMotion.growBars(bars);
 }
 
 /* -------------------------------------------------------- dashboard panels */
@@ -261,12 +272,17 @@ function renderTopFlags() {
     main.append(el("div", "alert-name", e.employee_name));
     main.append(el("div", "alert-meta", e.summary || `${e.role} · ${e.store_id}`));
     card.append(main);
-    const score = el("div", "alert-score", String(Math.round(e.risk_score)));
+    const score = el("div", "alert-score");
+    const scoreValue = el("span");
+    score.append(scoreValue);
     score.append(el("small", null, " /100"));
     card.append(score);
+    if (window.FimMotion) FimMotion.animateNumber(scoreValue, e.risk_score, { key: `alert-score:${e.employee_id}` });
+    else scoreValue.textContent = String(Math.round(e.risk_score));
     card.addEventListener("click", () => openDrawer(e.employee_id));
     wrap.append(card);
   });
+  if (window.FimMotion) FimMotion.revealChildren(wrap, ".alert-card");
 }
 
 function renderActiveList() {
@@ -288,6 +304,7 @@ function renderActiveList() {
     row.addEventListener("click", () => openDrawer(e.employee_id));
     wrap.append(row);
   });
+  if (window.FimMotion) FimMotion.revealChildren(wrap, ".active-row", { y: 6, stagger: 0.035 });
 }
 
 function populateEmployeeFilterOptions() {
@@ -333,6 +350,7 @@ async function loadRecentActivity() {
     row.append(main);
     wrap.append(row);
   });
+  if (window.FimMotion) FimMotion.revealChildren(wrap, ".feed-row", { y: 6, stagger: 0.03 });
 }
 
 /* ------------------------------------------------------------ employees */
@@ -340,12 +358,13 @@ async function loadEmployees() {
   const data = await api("/api/employees");
   state.employees = data.employees || [];
   populateEmployeeFilterOptions();
-  renderEmployees();
+  renderEmployees({ animate: true });
   renderTopFlags();
   renderActiveList();
 }
 
-function renderEmployees() {
+function renderEmployees(opts) {
+  opts = opts || {};
   const grid = $("#employee-grid");
   grid.innerHTML = "";
   const term = state.search.trim().toLowerCase();
@@ -373,9 +392,14 @@ function renderEmployees() {
     left.append(el("div", "card-name", e.employee_name));
     left.append(el("div", "card-meta", `${e.role} · ${e.store_id} · ${e.employee_id}`));
     const score = el("div", "score");
-    score.append(document.createTextNode(
-      e.status === "insufficient_data" ? "-" : Number(e.risk_score).toFixed(0)
-    ));
+    if (e.status === "insufficient_data") {
+      score.append(document.createTextNode("-"));
+    } else {
+      const scoreValue = el("span");
+      score.append(scoreValue);
+      if (window.FimMotion) FimMotion.animateNumber(scoreValue, e.risk_score, { key: `card-score:${e.employee_id}` });
+      else scoreValue.textContent = Number(e.risk_score).toFixed(0);
+    }
     score.append(el("small", null, " /100"));
     head.append(left, score);
     card.append(head);
@@ -403,10 +427,11 @@ function renderEmployees() {
     });
     grid.append(card);
   });
+  if (opts.animate && window.FimMotion) FimMotion.revealChildren(grid, ".card");
 }
 
 /* --------------------------------------------------------------- drawer */
-function renderComponentBars(components) {
+function renderComponentBars(components, employeeId) {
   const LABELS = { peer: "Peer deviation", self: "Self deviation", isolation_forest: "Isolation Forest" };
   const COLORS = { peer: "var(--accent)", self: "var(--watch)", isolation_forest: "var(--flag)" };
   const wrap = el("div", "component-bars");
@@ -420,7 +445,15 @@ function renderComponentBars(components) {
     fill.style.background = COLORS[key];
     track.append(fill);
     row.append(track);
-    row.append(el("div", "component-value", value == null ? "n/a" : value.toFixed(0)));
+    const valueEl = el("div", "component-value");
+    row.append(valueEl);
+    if (value == null) {
+      valueEl.textContent = "n/a";
+    } else if (window.FimMotion) {
+      FimMotion.animateNumber(valueEl, value, { key: `component:${employeeId}:${key}` });
+    } else {
+      valueEl.textContent = value.toFixed(0);
+    }
     wrap.append(row);
   });
   return wrap;
@@ -448,6 +481,10 @@ async function openDrawer(employeeId) {
   body.innerHTML = "<p class='empty'>Loading…</p>";
   $("#drawer").hidden = false;
   $("#drawer-backdrop").hidden = false;
+  if (window.FimMotion && FimMotion.gsapReady()) {
+    window.gsap.fromTo("#drawer", { x: 24, opacity: 0.6 }, { x: 0, opacity: 1, duration: FimMotion.DUR.base, ease: FimMotion.EASE.out });
+    window.gsap.fromTo("#drawer-backdrop", { opacity: 0 }, { opacity: 1, duration: FimMotion.DUR.fast });
+  }
 
   let d;
   try {
@@ -479,11 +516,14 @@ async function openDrawer(employeeId) {
     trendRow.append(el("div", "trend-caption",
       `${history.length} scans · ${history[0].risk_score.toFixed(0)} → ${history[history.length - 1].risk_score.toFixed(0)}`));
     body.append(trendRow);
+    if (window.FimMotion) FimMotion.drawSparkline(sparkWrap);
   }
 
   /* composite score ---------------------------------------------------- */
   body.append(el("h3", null, "Composite score components"));
-  body.append(renderComponentBars(d.components));
+  const componentBars = renderComponentBars(d.components, d.employee_id);
+  body.append(componentBars);
+  if (window.FimMotion) FimMotion.growBars(componentBars, ".component-fill");
 
   /* why ------------------------------------------------------------- */
   body.append(el("h3", null, "Why this score"));
@@ -662,6 +702,7 @@ async function loadFlags() {
     card.prepend(head);
     list.append(card);
   });
+  if (window.FimMotion) FimMotion.revealChildren(list, ".flag-card", { y: 8, stagger: 0.04 });
 }
 
 /* ---------------------------------------------------------------- audit */
@@ -674,13 +715,15 @@ function auditKind(action) {
 
 function renderAuditVerification(v) {
   const banner = $("#audit-verification");
+  const icon = $("#audit-verify-icon");
   banner.className = `verify-banner ${v.ok ? "ok" : "bad"}`;
-  $("#audit-verify-icon").innerHTML = v.ok ? ICONS.check : ICONS.alert;
+  icon.innerHTML = v.ok ? ICONS.check : ICONS.alert;
   $("#audit-verify-state").textContent = v.ok ? "Chain verified" : `Chain INVALID at entry #${v.broken_at}`;
   $("#audit-verify-detail").textContent = v.ok
     ? `${v.entries} entries, head ${String(v.head).slice(0, 16)}… Each entry commits to the one before it, ` +
       "so a deleted or edited record breaks every link after it."
     : `${v.problem}`;
+  if (window.FimMotion) FimMotion.verifyResult(icon, v.ok);
 }
 
 function renderAuditTable() {
@@ -715,6 +758,7 @@ function renderAuditTable() {
 }
 
 async function loadAudit() {
+  if (window.FimMotion) FimMotion.verifyStart($("#audit-verify-icon"));
   const data = await api("/api/audit?limit=250");
   renderAuditVerification(data.verification);
   state.auditEntries = data.entries || [];
@@ -753,7 +797,9 @@ function renderRiskByGroup(selector, key) {
       display: `${g.avg.toFixed(0)} (${g.scores.length})`,
       pct: g.avg,
     }));
-  wrap.append(buildBarChart(rows, { wide: true }));
+  const bars = buildBarChart(rows, { wide: true });
+  wrap.append(bars);
+  if (window.FimMotion) FimMotion.growBars(bars);
 }
 
 function renderTxnSummary() {
@@ -808,7 +854,9 @@ async function renderAnomalyTypes() {
   const rows = entries.map(([label, count]) => ({
     label, color: "var(--accent)", display: String(count), pct: (count / max) * 100,
   }));
-  wrap.append(buildBarChart(rows, { wide: true }));
+  const bars = buildBarChart(rows, { wide: true });
+  wrap.append(bars);
+  if (window.FimMotion) FimMotion.growBars(bars);
 }
 
 /* --------------------------------------------------------- simulation lab */
@@ -848,6 +896,7 @@ async function loadSimCompare() {
   });
   table.append(tbody);
   wrap.append(table);
+  if (window.FimMotion) FimMotion.revealChildren(tbody, "tr", { y: 6, stagger: 0.04 });
 }
 
 function wireSimLab() {
@@ -916,11 +965,15 @@ async function loadMetrics() {
     ["Naive rule precision", mean(s.naive_precision)],
   ].forEach(([label, value]) => {
     const tile = el("div", "tile");
-    tile.append(el("div", "value", value.toFixed(2)));
+    const valueEl = el("div", "value");
+    tile.append(valueEl);
     tile.append(el("div", "label", label));
     grid.append(tile);
+    if (window.FimMotion) FimMotion.animateNumber(valueEl, value, { key: `metric:${label}`, decimals: 2 });
+    else valueEl.textContent = value.toFixed(2);
   });
   body.append(grid);
+  if (window.FimMotion) FimMotion.revealChildren(grid, ".tile");
 
   body.append(el("p", "caveats",
     `${s.caught} planted actors caught, ${s.false_alarms} false alarms, ` +
@@ -963,10 +1016,17 @@ function wireTabs() {
         t.classList.remove("active");
         t.setAttribute("aria-selected", "false");
       });
-      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
       tab.classList.add("active");
       tab.setAttribute("aria-selected", "true");
-      $(`#tab-${tab.dataset.tab}`).classList.add("active");
+
+      const oldPanel = document.querySelector(".panel.active");
+      const newPanel = $(`#tab-${tab.dataset.tab}`);
+      if (window.FimMotion && FimMotion.transitionPanel) {
+        FimMotion.transitionPanel(oldPanel, newPanel);
+      } else {
+        document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+        newPanel.classList.add("active");
+      }
       $("#page-title").textContent = PAGE_TITLES[tab.dataset.tab] || "";
       if (tab.dataset.tab === "audit") loadAudit();
       if (tab.dataset.tab === "flags") loadFlags();
@@ -1026,6 +1086,7 @@ function wireFilters() {
     const btn = $("#audit-verify-btn");
     btn.disabled = true;
     btn.textContent = "Verifying…";
+    if (window.FimMotion) FimMotion.verifyStart($("#audit-verify-icon"));
     try {
       const v = await api("/api/audit/verify");
       renderAuditVerification(v);
@@ -1053,6 +1114,8 @@ async function init() {
     const btn = ev.currentTarget;
     btn.disabled = true;
     btn.textContent = "Scanning…";
+    if (window.FimMotion) FimMotion.scanStart(btn);
+    let ok = true;
     try {
       await api("/api/scan", {
         method: "POST",
@@ -1060,11 +1123,14 @@ async function init() {
         body: JSON.stringify({ actor: "dashboard" }),
       });
       await Promise.all([loadOverview(), loadEmployees(), loadFlags(), loadAudit(), loadRecentActivity()]);
+      if (window.FimMotion) FimMotion.flashUpdated($("#tiles"));
     } catch (err) {
+      ok = false;
       alert(`Scan failed: ${err.message}`);
     } finally {
       btn.disabled = false;
       btn.textContent = "Run scan";
+      if (window.FimMotion) FimMotion.scanEnd(btn, ok);
     }
   });
 
