@@ -1,0 +1,81 @@
+{
+  "6": {
+    "name": "6",
+    "label": "Simulation: 6",
+    "description": "20 employees, 90 days, 3 planted actors, seed 1.",
+    "created_at": "2026-09-02T19:15:31",
+    "params": {
+      "name": "6",
+      "employees": 20,
+      "days": 90,
+      "bad_actors": 3,
+      "seed": 1
+    },
+    "events_csv": "data\\simulations\\6\\events.csv",
+    "db_path": "data\\simulations\\6\\fim.db",
+    "ground_truth_json": "data\\simulations\\6\\ground_truth.json",
+    "scan": {
+      "scan_id": "scan-4cef65f8a5ee",
+      "as_of": "2026-09-02T18:56:18",
+      "events_ingested": 34571,
+      "ingest_problems": [],
+      "employees_seen": 20,
+      "flags_raised": 3,
+      "flag_ids": [
+        "flag-136b8cd3493a",
+        "flag-241d06c6fdec",
+        "flag-4f04d593f24b"
+      ],
+      "watch": 1,
+      "insufficient_data": 0,
+      "model_version": "ifm-0.1.0",
+      "config_digest": "61be7218ef1dcb6a"
+    },
+    "metrics": {
+      "flagged": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 3,
+        "fp": 0,
+        "fn": 0
+      },
+      "flagged_or_watch": {
+        "precision": 0.75,
+        "recall": 1.0,
+        "f1": 0.857,
+        "tp": 3,
+        "fp": 1,
+        "fn": 0
+      },
+      "average_precision": 1.0,
+      "planted": 3,
+      "per_pattern": {
+        "refund_mill": {
+          "employee_id": "EMP-1004",
+          "risk_score": 82.0,
+          "status": "flagged",
+          "rank": 3,
+          "of": 20,
+          "caught": true
+        },
+        "void_skimmer": {
+          "employee_id": "EMP-1011",
+          "risk_score": 84.7,
+          "status": "flagged",
+          "rank": 2,
+          "of": 20,
+          "caught": true
+        },
+        "discount_abuse": {
+          "employee_id": "EMP-1014",
+          "risk_score": 100.0,
+          "status": "flagged",
+          "rank": 1,
+          "of": 20,
+          "caught": true
+        }
+      }
+    }
+  }
+}

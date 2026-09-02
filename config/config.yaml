@@ -60,3 +60,26 @@ features:
 
 review:
   decisions: [confirmed_issue, cleared, needs_more_info, escalated]
+
+# Named, switchable databases. Each is a fully independent (events, scans,
+# flags, audit log) triple - "batch mode" in the dashboard just points the
+# running server at a different one of these. See /api/datasets in api.py.
+datasets:
+  default:
+    label: Default demo store
+    description: The original two-store demo dataset shipped with the repo (24 employees).
+    events_csv: data/events.csv
+    db_path: data/fim.db
+    ground_truth_json: data/ground_truth.json
+  store_a:
+    label: Store A
+    description: Single-store trial - 20 employees, ~50k transactions, 3 planted actors.
+    events_csv: data/store_a/events.csv
+    db_path: data/store_a/fim.db
+    ground_truth_json: data/store_a/ground_truth.json
+  store_b:
+    label: Store B
+    description: A second, independently generated trial store for side-by-side comparison.
+    events_csv: data/store_b/events.csv
+    db_path: data/store_b/fim.db
+    ground_truth_json: data/store_b/ground_truth.json

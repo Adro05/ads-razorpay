@@ -407,11 +407,14 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", default=str(ROOT / "data" / "events.csv"))
     parser.add_argument("--truth", default=str(ROOT / "data" / "ground_truth.json"))
+    parser.add_argument("--stores", default=None,
+                        help="comma-separated store ids, e.g. STORE-A or ST-01,ST-02")
     args = parser.parse_args(argv)
 
+    stores = [s.strip() for s in args.stores.split(",") if s.strip()] if args.stores else None
     ledger, employees, truth = generate(
         days=args.days, n_employees=args.employees,
-        n_bad=args.bad_actors, seed=args.seed,
+        n_bad=args.bad_actors, seed=args.seed, stores=stores,
     )
     write_csv(ledger, Path(args.out))
     Path(args.truth).write_text(json.dumps(truth, indent=2), encoding="utf-8")

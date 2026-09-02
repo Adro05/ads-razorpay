@@ -25,6 +25,12 @@
         </div>
       </div>
 
+      <div class="dataset-switcher">
+        <label for="dataset-select">Dataset</label>
+        <select id="dataset-select" aria-label="Active dataset"></select>
+        <p class="dataset-hint" id="dataset-hint"></p>
+      </div>
+
       <nav class="side-nav" role="tablist" aria-label="Sections">
         <button class="side-tab active" data-tab="activity" role="tab" aria-selected="true">
           <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2.5-7 5 14L16 12h6"/></svg>
@@ -39,9 +45,17 @@
           <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.4 8.6-7 9.5C8.4 20.6 5 17 5 12V6l7-3Z"/><path d="m9 12 2 2 4-4.5"/></svg>
           <span class="nav-label">Audit trail</span>
         </button>
+        <button class="side-tab" data-tab="analytics" role="tab" aria-selected="false">
+          <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9"/><path d="M11 19V4"/><path d="M18 19v-7"/><path d="M2 19h20"/></svg>
+          <span class="nav-label">Analytics</span>
+        </button>
         <button class="side-tab" data-tab="metrics" role="tab" aria-selected="false">
           <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="20" x2="5" y2="11"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="19" y1="20" x2="19" y2="14"/></svg>
           <span class="nav-label">Honest metrics</span>
+        </button>
+        <button class="side-tab" data-tab="simlab" role="tab" aria-selected="false">
+          <svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v5.2a2 2 0 0 1-.4 1.2L4.9 16.6A2 2 0 0 0 6.5 20h11a2 2 0 0 0 1.6-3.4l-4.7-7.2a2 2 0 0 1-.4-1.2V3"/></svg>
+          <span class="nav-label">Simulation lab</span>
         </button>
       </nav>
 
@@ -80,6 +94,7 @@
                   <h2>Needs review</h2>
                   <button class="section-link" data-goto="flags">View all →</button>
                 </div>
+                <p class="section-note">Statistical deviations flagged for a human look — not findings of wrongdoing.</p>
                 <div class="alert-row" id="top-flags"></div>
               </div>
 
@@ -90,6 +105,19 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
                     <input id="search" type="search" placeholder="Search name, role or store…" />
                   </div>
+                  <select id="role-filter" class="select-filter" aria-label="Filter by role">
+                    <option value="">All roles</option>
+                  </select>
+                  <select id="store-filter" class="select-filter" aria-label="Filter by store">
+                    <option value="">All stores</option>
+                  </select>
+                  <select id="risk-filter" class="select-filter" aria-label="Filter by risk level">
+                    <option value="">Any risk level</option>
+                    <option value="75-100">75–100 (high)</option>
+                    <option value="50-75">50–75</option>
+                    <option value="25-50">25–50</option>
+                    <option value="0-25">0–25 (low)</option>
+                  </select>
                   <div class="filters" id="status-filters">
                     <button class="chip active" data-status="">All</button>
                     <button class="chip" data-status="flagged">Flagged</button>
@@ -133,13 +161,36 @@
               <button class="chip" data-state="open">Open</button>
               <button class="chip" data-state="reviewed">Reviewed</button>
             </div>
+            <div class="sort-wrap">
+              <label for="flag-sort">Sort</label>
+              <select id="flag-sort" class="select-filter">
+                <option value="risk_desc">Highest risk first</option>
+                <option value="risk_asc">Lowest risk first</option>
+                <option value="recent">Most recently raised</option>
+              </select>
+            </div>
           </div>
           <div id="flag-list" class="stack"></div>
         </section>
 
         <!-- ------------------------------------------------ audit -->
         <section class="panel" id="tab-audit">
-          <div class="note" id="audit-verification"></div>
+          <div class="verify-banner" id="audit-verification">
+            <div class="verify-icon" id="audit-verify-icon"></div>
+            <div class="verify-main">
+              <div class="verify-state" id="audit-verify-state">Checking…</div>
+              <div class="verify-detail" id="audit-verify-detail"></div>
+            </div>
+            <button class="btn" id="audit-verify-btn">Verify now</button>
+          </div>
+          <div class="toolbar">
+            <div class="filters" id="audit-filters">
+              <button class="chip active" data-kind="">All events</button>
+              <button class="chip" data-kind="scan">Scans</button>
+              <button class="chip" data-kind="flag">Flags</button>
+              <button class="chip" data-kind="review">Reviews</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table class="table" id="audit-table">
               <thead>
@@ -150,9 +201,85 @@
           </div>
         </section>
 
+        <!-- ------------------------------------------------ analytics -->
+        <section class="panel" id="tab-analytics">
+          <div class="dash-grid">
+            <div class="dash-col-main">
+              <div class="section-card">
+                <div class="section-head"><h2>Risk by role</h2></div>
+                <div id="chart-role"></div>
+              </div>
+              <div class="section-card">
+                <div class="section-head"><h2>Risk by store</h2></div>
+                <div id="chart-store"></div>
+              </div>
+              <div class="section-card">
+                <div class="section-head"><h2>Anomaly types among flags</h2></div>
+                <p class="section-note">Which behavioural feature most often drives a flag, across every flag ever raised on this dataset.</p>
+                <div id="chart-anomaly"></div>
+              </div>
+            </div>
+            <div class="dash-col-side">
+              <div class="section-card">
+                <div class="section-head"><h2>Transaction behaviour</h2></div>
+                <div id="txn-summary" class="summary-list"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- ------------------------------------------------ metrics -->
         <section class="panel" id="tab-metrics">
           <div id="metrics-body"></div>
+        </section>
+
+        <!-- ------------------------------------------------ simulation lab -->
+        <section class="panel" id="tab-simlab">
+          <div class="dash-grid">
+            <div class="dash-col-main">
+              <div class="section-card">
+                <div class="section-head"><h2>Generate a controlled trial</h2></div>
+                <p class="section-note">
+                  Creates a brand-new synthetic store with a known, planted ground truth,
+                  scans it immediately, and adds it to the dataset switcher on the left.
+                  Nothing about the detector's scoring logic changes — this only ever
+                  produces new fictional test data to run it against.
+                </p>
+                <form id="simlab-form" class="sim-form">
+                  <div class="sim-field">
+                    <label for="sim-name">Name</label>
+                    <input id="sim-name" required placeholder="e.g. trial-4" pattern="[a-z0-9_-]+"
+                           title="lowercase letters, numbers, hyphen or underscore" />
+                  </div>
+                  <div class="sim-field">
+                    <label for="sim-employees">Employees</label>
+                    <input id="sim-employees" type="number" min="6" max="60" value="20" />
+                  </div>
+                  <div class="sim-field">
+                    <label for="sim-days">Days of history</label>
+                    <input id="sim-days" type="number" min="14" max="200" value="90" />
+                  </div>
+                  <div class="sim-field">
+                    <label for="sim-bad">Planted actors</label>
+                    <input id="sim-bad" type="number" min="0" max="8" value="3" />
+                  </div>
+                  <div class="sim-field">
+                    <label for="sim-seed">Random seed</label>
+                    <input id="sim-seed" type="number" min="0" value="1" />
+                  </div>
+                  <button type="submit" class="btn primary" id="sim-submit">Generate &amp; scan</button>
+                </form>
+                <p class="empty" id="sim-status" hidden></p>
+              </div>
+            </div>
+            <div class="dash-col-side">
+              <div class="section-card">
+                <div class="section-head"><h2>Simulation comparison</h2></div>
+                <p class="section-note">Precision / recall against each trial's own planted ground truth.</p>
+                <div id="sim-compare" class="table-wrap"></div>
+              </div>
+            </div>
+          </div>
         </section>
       </main>
 

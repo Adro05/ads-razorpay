@@ -7,8 +7,14 @@
 const state = {
   employees: [],
   statusFilter: "",
+  roleFilter: "",
+  storeFilter: "",
+  riskFilter: "",
   search: "",
   flagState: "",
+  flagSort: "risk_desc",
+  auditKind: "",
+  auditEntries: [],
   decisions: ["confirmed_issue", "cleared", "needs_more_info", "escalated"],
   featureLabels: {},
 };
@@ -47,7 +53,9 @@ const PAGE_TITLES = {
   activity: "Activity tracker",
   flags: "Review queue",
   audit: "Audit trail",
+  analytics: "Analytics",
   metrics: "Honest metrics",
+  simlab: "Simulation lab",
 };
 
 function initials(name) {
@@ -69,12 +77,103 @@ function when(iso) {
   return then.toLocaleDateString();
 }
 
+function riskColor(score) {
+  if (score >= 70) return "var(--flag)";
+  if (score >= 50) return "var(--watch)";
+  return "var(--clear)";
+}
+
+/* --------------------------------------------------------------- charts */
+function buildBarChart(rows, { wide = false } = {}) {
+  const bars = el("div", "chart-bars");
+  rows.forEach(({ label, display, pct, color }) => {
+    const row = el("div", `chart-row${wide ? " chart-row--wide" : ""}`);
+    row.append(el("div", "chart-label", label));
+    const track = el("div", "chart-track");
+    const fill = el("span", "chart-fill");
+    fill.style.width = `${Math.max(2, pct)}%`;
+    fill.style.background = color;
+    track.append(fill);
+    row.append(track);
+    row.append(el("div", "chart-count", display));
+    bars.append(row);
+  });
+  return bars;
+}
+
+function sparkline(points, { width = 168, height = 38 } = {}) {
+  if (!points.length) return "";
+  const pad = 4;
+  const vals = points.map((p) => Number(p.risk_score));
+  const min = Math.min(...vals, 0);
+  const max = Math.max(...vals, 100);
+  const span = Math.max(max - min, 1);
+  const stepX = points.length > 1 ? (width - pad * 2) / (points.length - 1) : 0;
+  const coords = points.map((p, i) => {
+    const x = pad + i * stepX;
+    const y = height - pad - ((Number(p.risk_score) - min) / span) * (height - pad * 2);
+    return [x, y];
+  });
+  const path = coords.map((c) => c.join(",")).join(" ");
+  const last = coords[coords.length - 1];
+  const color = riskColor(vals[vals.length - 1]);
+  return (
+    `<svg class="trend-spark" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+    `<polyline points="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<circle cx="${last[0]}" cy="${last[1]}" r="3" fill="${color}"/></svg>`
+  );
+}
+
+/* ------------------------------------------------------------- datasets */
+async function loadDatasets() {
+  const data = await api("/api/datasets");
+  const sel = $("#dataset-select");
+  sel.innerHTML = "";
+  data.datasets.forEach((d) => {
+    const label = d.label + (d.events_ready ? "" : " (not generated)");
+    const opt = new Option(label, d.id, d.is_active, d.is_active);
+    sel.append(opt);
+  });
+  const active = data.datasets.find((d) => d.is_active);
+  $("#dataset-hint").textContent = active
+    ? `${active.description}${active.planted_actors != null ? ` · ${active.planted_actors} planted actor(s)` : ""}`
+    : "";
+}
+
+async function activateDataset(id) {
+  const sel = $("#dataset-select");
+  sel.disabled = true;
+  try {
+    await api(`/api/datasets/${encodeURIComponent(id)}/activate`, { method: "POST" });
+    closeDrawer();
+    await loadDatasets();
+    await refreshForActiveTab();
+  } catch (err) {
+    alert(`Could not switch dataset: ${err.message}`);
+    await loadDatasets();
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+async function refreshForActiveTab() {
+  await Promise.all([loadOverview(), loadEmployees(), loadRecentActivity()]);
+  const activeTab = document.querySelector(".side-tab.active")?.dataset.tab;
+  if (activeTab === "audit") await loadAudit();
+  if (activeTab === "flags") await loadFlags();
+  if (activeTab === "metrics") await loadMetrics();
+  if (activeTab === "analytics") await loadAnalytics();
+  if (activeTab === "simlab") await loadSimCompare();
+}
+
 /* ------------------------------------------------------------- overview */
 async function loadOverview() {
   const data = await api("/api/overview");
   const meta = $("#scan-meta");
   if (!data.scan) {
     meta.textContent = "No scans yet - run a scan to populate the tracker.";
+    $("#tiles").innerHTML = "";
+    $("#status-chart").innerHTML = "";
     return;
   }
   const t = data.thresholds || {};
@@ -122,35 +221,23 @@ async function loadOverview() {
   renderStatusChart(c);
 }
 
-/* ------------------------------------------------------------ status chart */
 function renderStatusChart(c) {
-  const rows = [
-    ["flagged", "Flagged", c.flagged, "var(--flag)"],
-    ["watch", "Watch", c.watch, "var(--watch)"],
-    ["clear", "Clear", c.clear, "var(--clear)"],
-    ["insufficient_data", "Not scored", c.insufficient_data, "var(--idle)"],
-  ];
-  const total = Math.max(1, c.employees || rows.reduce((s, [, , v]) => s + (v || 0), 0));
   const wrap = $("#status-chart");
   wrap.innerHTML = "";
   if (!c.employees) {
     wrap.append(el("p", "empty", "No scan yet."));
     return;
   }
-  const bars = el("div", "chart-bars");
-  rows.forEach(([, label, value, color]) => {
-    const row = el("div", "chart-row");
-    row.append(el("div", "chart-label", label));
-    const track = el("div", "chart-track");
-    const fill = el("span", "chart-fill");
-    fill.style.width = `${Math.max(2, ((value || 0) / total) * 100)}%`;
-    fill.style.background = color;
-    track.append(fill);
-    row.append(track);
-    row.append(el("div", "chart-count", String(value || 0)));
-    bars.append(row);
-  });
-  wrap.append(bars);
+  const total = Math.max(1, c.employees);
+  const rows = [
+    ["Flagged", c.flagged, "var(--flag)"],
+    ["Watch", c.watch, "var(--watch)"],
+    ["Clear", c.clear, "var(--clear)"],
+    ["Not scored", c.insufficient_data, "var(--idle)"],
+  ].map(([label, value, color]) => ({
+    label, color, display: String(value || 0), pct: ((value || 0) / total) * 100,
+  }));
+  wrap.append(buildBarChart(rows));
 }
 
 /* -------------------------------------------------------- dashboard panels */
@@ -203,6 +290,22 @@ function renderActiveList() {
   });
 }
 
+function populateEmployeeFilterOptions() {
+  const fillSelect = (select, values) => {
+    const current = select.value;
+    select.innerHTML = "";
+    select.append(new Option(select.dataset.allLabel, ""));
+    values.forEach((v) => select.append(new Option(v, v)));
+    if (values.includes(current)) select.value = current;
+  };
+  const roles = [...new Set(state.employees.map((e) => e.role))].sort();
+  const stores = [...new Set(state.employees.map((e) => e.store_id))].sort();
+  $("#role-filter").dataset.allLabel = "All roles";
+  $("#store-filter").dataset.allLabel = "All stores";
+  fillSelect($("#role-filter"), roles);
+  fillSelect($("#store-filter"), stores);
+}
+
 /* -------------------------------------------------------- recent activity */
 async function loadRecentActivity() {
   let data;
@@ -236,6 +339,7 @@ async function loadRecentActivity() {
 async function loadEmployees() {
   const data = await api("/api/employees");
   state.employees = data.employees || [];
+  populateEmployeeFilterOptions();
   renderEmployees();
   renderTopFlags();
   renderActiveList();
@@ -245,8 +349,14 @@ function renderEmployees() {
   const grid = $("#employee-grid");
   grid.innerHTML = "";
   const term = state.search.trim().toLowerCase();
+  const [riskMin, riskMax] = state.riskFilter
+    ? state.riskFilter.split("-").map(Number)
+    : [null, null];
   const rows = state.employees.filter((e) => {
     if (state.statusFilter && e.status !== state.statusFilter) return false;
+    if (state.roleFilter && e.role !== state.roleFilter) return false;
+    if (state.storeFilter && e.store_id !== state.storeFilter) return false;
+    if (riskMin !== null && !(e.risk_score >= riskMin && e.risk_score <= riskMax)) return false;
     if (!term) return true;
     return [e.employee_name, e.role, e.store_id, e.employee_id]
       .join(" ").toLowerCase().includes(term);
@@ -296,6 +406,43 @@ function renderEmployees() {
 }
 
 /* --------------------------------------------------------------- drawer */
+function renderComponentBars(components) {
+  const LABELS = { peer: "Peer deviation", self: "Self deviation", isolation_forest: "Isolation Forest" };
+  const COLORS = { peer: "var(--accent)", self: "var(--watch)", isolation_forest: "var(--flag)" };
+  const wrap = el("div", "component-bars");
+  Object.entries(LABELS).forEach(([key, label]) => {
+    const value = components ? components[key] : null;
+    const row = el("div", "component-row");
+    row.append(el("div", "component-label", label));
+    const track = el("div", "component-track");
+    const fill = el("span", "component-fill");
+    fill.style.width = `${value == null ? 0 : Math.max(2, value)}%`;
+    fill.style.background = COLORS[key];
+    track.append(fill);
+    row.append(track);
+    row.append(el("div", "component-value", value == null ? "n/a" : value.toFixed(0)));
+    wrap.append(row);
+  });
+  return wrap;
+}
+
+function renderReasonBox(r) {
+  const box = el("div", "reason");
+  const rh = el("div", "reason-head");
+  rh.append(el("strong", null, r.headline));
+  rh.append(el("span", "basis", `${(r.contribution * 100).toFixed(0)}% of score`));
+  box.append(rh);
+  box.append(el("p", null, r.detail));
+  const contrib = el("div", "contrib");
+  const span = el("span");
+  span.style.width = `${Math.min(100, r.contribution * 100)}%`;
+  contrib.append(span);
+  box.append(contrib);
+  box.append(el("div", "basis",
+    `observed ${fmtNum(r.observed)} vs ${fmtNum(r.comparison)}${r.z ? ` · z = ${Number(r.z).toFixed(2)}` : ""}`));
+  return box;
+}
+
 async function openDrawer(employeeId) {
   const body = $("#drawer-body");
   body.innerHTML = "<p class='empty'>Loading…</p>";
@@ -321,6 +468,23 @@ async function openDrawer(employeeId) {
   head.append(el("span", "pill", `${d.event_count} actions in window`));
   body.append(head);
 
+  /* trend ------------------------------------------------------------- */
+  const history = [...(d.history || [])].reverse();
+  if (history.length > 1) {
+    body.append(el("h3", null, "Risk trend"));
+    const trendRow = el("div", "trend-row");
+    const sparkWrap = el("div");
+    sparkWrap.innerHTML = sparkline(history);
+    trendRow.append(sparkWrap);
+    trendRow.append(el("div", "trend-caption",
+      `${history.length} scans · ${history[0].risk_score.toFixed(0)} → ${history[history.length - 1].risk_score.toFixed(0)}`));
+    body.append(trendRow);
+  }
+
+  /* composite score ---------------------------------------------------- */
+  body.append(el("h3", null, "Composite score components"));
+  body.append(renderComponentBars(d.components));
+
   /* why ------------------------------------------------------------- */
   body.append(el("h3", null, "Why this score"));
   if (!d.reasons || d.reasons.length === 0) {
@@ -329,26 +493,22 @@ async function openDrawer(employeeId) {
         ? d.summary
         : "No individually reportable deviation. Nothing here is evidence of anything."));
   } else {
-    d.reasons.forEach((r) => {
-      const box = el("div", "reason");
-      const rh = el("div", "reason-head");
-      rh.append(el("strong", null, r.headline));
-      rh.append(el("span", "basis", `${(r.contribution * 100).toFixed(0)}% of score`));
-      box.append(rh);
-      box.append(el("p", null, r.detail));
-      const contrib = el("div", "contrib");
-      const span = el("span");
-      span.style.width = `${Math.min(100, r.contribution * 100)}%`;
-      contrib.append(span);
-      box.append(contrib);
-      box.append(el("div", "basis",
-        `basis: ${r.basis}${r.z ? ` · z = ${Number(r.z).toFixed(2)}` : ""}`));
-      body.append(box);
+    const groups = { peer: [], self: [], model: [] };
+    d.reasons.forEach((r) => { (groups[r.basis] || groups.model).push(r); });
+    const groupLabels = {
+      peer: "Peer comparison",
+      self: "Self baseline (own recent history)",
+      model: "Model cross-check",
+    };
+    ["peer", "self", "model"].forEach((basis) => {
+      if (!groups[basis].length) return;
+      body.append(el("div", "reason-group-label", groupLabels[basis]));
+      groups[basis].forEach((r) => body.append(renderReasonBox(r)));
     });
   }
 
-  /* components ------------------------------------------------------- */
-  body.append(el("h3", null, "Score components"));
+  /* components table --------------------------------------------------- */
+  body.append(el("h3", null, "Score components (raw)"));
   const comp = el("table", "table");
   comp.innerHTML = "<thead><tr><th>component</th><th class='num'>0-100</th></tr></thead>";
   const ctb = el("tbody");
@@ -362,15 +522,24 @@ async function openDrawer(employeeId) {
   body.append(comp);
 
   /* features --------------------------------------------------------- */
-  body.append(el("h3", null, "Window features"));
+  body.append(el("h3", null, "Current window vs. baseline"));
+  body.append(el("p", "caveats",
+    "Baseline is shown only for features that produced an individually reportable deviation above; " +
+    "the rest are this window's raw values with nothing unusual to compare them to."));
+  const selfByFeature = {};
+  (d.reasons || []).filter((r) => r.basis === "self").forEach((r) => { selfByFeature[r.feature] = r; });
   const ft = el("table", "table");
-  ft.innerHTML = "<thead><tr><th>feature</th><th class='num'>value</th></tr></thead>";
+  ft.innerHTML = "<thead><tr><th>feature</th><th class='num'>current (7d)</th>" +
+    "<th class='num'>baseline (28d)</th><th class='num'>z</th></tr></thead>";
   const ftb = el("tbody");
   Object.entries(d.features || {}).forEach(([k, v]) => {
     const tr = el("tr");
     tr.append(el("td", null, state.featureLabels[k] || titleCase(k)));
     const isPct = !["avg_refund_amount", "avg_discount_pct"].includes(k);
     tr.append(el("td", "num", isPct ? fmtPct(v) : fmtNum(v)));
+    const match = selfByFeature[k];
+    tr.append(el("td", "num", match ? (isPct ? fmtPct(match.comparison) : fmtNum(match.comparison)) : "—"));
+    tr.append(el("td", "num", match ? match.z.toFixed(2) : "—"));
     ftb.append(tr);
   });
   ft.append(ftb);
@@ -470,36 +639,63 @@ function closeDrawer() {
 async function loadFlags() {
   const query = state.flagState ? `?state=${state.flagState}` : "";
   const data = await api(`/api/flags${query}`);
+  let flags = data.flags || [];
+  if (state.flagSort === "risk_desc") flags = [...flags].sort((a, b) => b.risk_score - a.risk_score);
+  else if (state.flagSort === "risk_asc") flags = [...flags].sort((a, b) => a.risk_score - b.risk_score);
+
   const list = $("#flag-list");
   list.innerHTML = "";
-  if (!data.flags.length) {
+  if (!flags.length) {
     list.append(el("p", "empty", "No flags recorded."));
     return;
   }
-  data.flags.forEach((f) => {
+  flags.forEach((f) => {
     const card = renderFlagCard(f);
     const head = el("div");
-    head.append(el("strong", null, f.employee_name));
-    head.append(document.createTextNode(` · ${f.state}`));
+    const link = el("strong", null, f.employee_name);
+    link.style.cursor = "pointer";
+    link.style.color = "var(--accent)";
+    link.addEventListener("click", () => openDrawer(f.employee_id));
+    head.append(link);
+    head.append(document.createTextNode(" · "));
+    head.append(el("span", `pill ${f.state === "open" ? "flagged" : "clear"}`, f.state));
     card.prepend(head);
     list.append(card);
   });
 }
 
 /* ---------------------------------------------------------------- audit */
-async function loadAudit() {
-  const data = await api("/api/audit?limit=250");
-  const v = data.verification || {};
-  const note = $("#audit-verification");
-  note.className = `note ${v.ok ? "ok" : "bad"}`;
-  note.textContent = v.ok
-    ? `Hash chain verified over ${v.entries} entries. Head ${String(v.head).slice(0, 16)}…  ` +
-      "Each entry commits to the one before it, so a deleted or edited record breaks every link after it."
-    : `Chain verification FAILED at entry #${v.broken_at}: ${v.problem}`;
+function auditKind(action) {
+  if (action.startsWith("scan.")) return "scan";
+  if (action === "flag.raised") return "flag";
+  if (action === "flag.reviewed") return "review";
+  return "other";
+}
 
+function renderAuditVerification(v) {
+  const banner = $("#audit-verification");
+  banner.className = `verify-banner ${v.ok ? "ok" : "bad"}`;
+  $("#audit-verify-icon").innerHTML = v.ok ? ICONS.check : ICONS.alert;
+  $("#audit-verify-state").textContent = v.ok ? "Chain verified" : `Chain INVALID at entry #${v.broken_at}`;
+  $("#audit-verify-detail").textContent = v.ok
+    ? `${v.entries} entries, head ${String(v.head).slice(0, 16)}… Each entry commits to the one before it, ` +
+      "so a deleted or edited record breaks every link after it."
+    : `${v.problem}`;
+}
+
+function renderAuditTable() {
   const tbody = $("#audit-table tbody");
   tbody.innerHTML = "";
-  (data.entries || []).forEach((e) => {
+  const rows = state.auditEntries.filter((e) => !state.auditKind || auditKind(e.action) === state.auditKind);
+  if (!rows.length) {
+    const tr = el("tr");
+    const td = el("td", "empty", "No matching audit entries.");
+    td.colSpan = 6;
+    tr.append(td);
+    tbody.append(tr);
+    return;
+  }
+  rows.forEach((e) => {
     const tr = el("tr");
     tr.append(el("td", "mono", `#${e.seq}`));
     tr.append(el("td", null, new Date(e.ts).toLocaleString()));
@@ -515,6 +711,181 @@ async function loadAudit() {
     if (detail.events !== undefined) bits.push(`${detail.events} events`);
     tr.append(el("td", "muted", bits.join(" · ")));
     tbody.append(tr);
+  });
+}
+
+async function loadAudit() {
+  const data = await api("/api/audit?limit=250");
+  renderAuditVerification(data.verification);
+  state.auditEntries = data.entries || [];
+  renderAuditTable();
+}
+
+/* ----------------------------------------------------------- analytics */
+async function loadAnalytics() {
+  renderRiskByGroup("#chart-role", "role");
+  renderRiskByGroup("#chart-store", "store_id");
+  renderTxnSummary();
+  await renderAnomalyTypes();
+}
+
+function renderRiskByGroup(selector, key) {
+  const wrap = $(selector);
+  wrap.innerHTML = "";
+  const scoreable = state.employees.filter((e) => e.status !== "insufficient_data");
+  if (!scoreable.length) {
+    wrap.append(el("p", "empty", "No scored employees yet."));
+    return;
+  }
+  const groups = {};
+  scoreable.forEach((e) => {
+    const k = e[key] || "unknown";
+    (groups[k] = groups[k] || []).push(e.risk_score);
+  });
+  const rows = Object.entries(groups)
+    .map(([label, scores]) => ({
+      label, scores, avg: scores.reduce((s, v) => s + v, 0) / scores.length,
+    }))
+    .sort((a, b) => b.avg - a.avg)
+    .map((g) => ({
+      label: g.label,
+      color: riskColor(g.avg),
+      display: `${g.avg.toFixed(0)} (${g.scores.length})`,
+      pct: g.avg,
+    }));
+  wrap.append(buildBarChart(rows, { wide: true }));
+}
+
+function renderTxnSummary() {
+  const wrap = $("#txn-summary");
+  wrap.innerHTML = "";
+  if (!state.employees.length) {
+    wrap.append(el("p", "empty", "No scan yet."));
+    return;
+  }
+  const totals = {};
+  state.employees.forEach((e) => {
+    Object.entries(e.counts || {}).forEach(([k, v]) => { totals[k] = (totals[k] || 0) + Number(v); });
+  });
+  [
+    ["Total sales", fmtNum(totals.sale_count || 0)],
+    ["Sales value", fmtNum(totals.sale_amount || 0)],
+    ["Total refunds", fmtNum(totals.refund_count || 0)],
+    ["Refund value", fmtNum(totals.refund_amount || 0)],
+    ["Voids", fmtNum(totals.void_count || 0)],
+    ["Discounts applied", fmtNum(totals.discount_count || 0)],
+    ["Manual overrides", fmtNum(totals.override_count || 0)],
+    ["Off-hours actions", fmtNum(totals.off_hours_count || 0)],
+  ].forEach(([label, value]) => {
+    const row = el("div", "summary-row");
+    row.append(el("div", "summary-label", label));
+    row.append(el("div", "summary-value", value));
+    wrap.append(row);
+  });
+}
+
+async function renderAnomalyTypes() {
+  const wrap = $("#chart-anomaly");
+  wrap.innerHTML = "";
+  let data;
+  try {
+    data = await api("/api/flags?limit=300");
+  } catch (_) {
+    wrap.append(el("p", "empty", "Could not load flags."));
+    return;
+  }
+  const counts = {};
+  (data.flags || []).forEach((f) => (f.reasons || []).forEach((r) => {
+    const label = state.featureLabels[r.feature] || titleCase(r.feature);
+    counts[label] = (counts[label] || 0) + 1;
+  }));
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  if (!entries.length) {
+    wrap.append(el("p", "empty", "No flags raised yet on this dataset."));
+    return;
+  }
+  const max = entries[0][1];
+  const rows = entries.map(([label, count]) => ({
+    label, color: "var(--accent)", display: String(count), pct: (count / max) * 100,
+  }));
+  wrap.append(buildBarChart(rows, { wide: true }));
+}
+
+/* --------------------------------------------------------- simulation lab */
+async function loadSimCompare() {
+  const wrap = $("#sim-compare");
+  wrap.innerHTML = "";
+  let data;
+  try {
+    data = await api("/api/simulations");
+  } catch (_) {
+    wrap.append(el("p", "empty", "Could not load simulations."));
+    return;
+  }
+  const rows = data.simulations || [];
+  if (!rows.length) {
+    wrap.append(el("p", "empty", "No simulations generated yet."));
+    return;
+  }
+  const table = el("table", "table");
+  table.innerHTML = "<thead><tr><th>name</th><th class='num'>flag precision</th>" +
+    "<th class='num'>flag recall</th><th class='num'>avg precision</th><th>planted patterns</th></tr></thead>";
+  const tbody = el("tbody");
+  rows.slice().reverse().forEach((s) => {
+    const tr = el("tr");
+    tr.append(el("td", null, s.name));
+    tr.append(el("td", "num", s.metrics.flagged.precision.toFixed(2)));
+    tr.append(el("td", "num", s.metrics.flagged.recall.toFixed(2)));
+    tr.append(el("td", "num", s.metrics.average_precision.toFixed(2)));
+    const td = el("td");
+    Object.entries(s.metrics.per_pattern || {}).forEach(([pattern, m]) => {
+      td.append(el("span", `sim-pattern ${m.caught ? "caught" : "missed"}`,
+        `${titleCase(pattern)}${m.caught ? "" : " (missed)"}`));
+      td.append(document.createTextNode(" "));
+    });
+    tr.append(td);
+    tbody.append(tr);
+  });
+  table.append(tbody);
+  wrap.append(table);
+}
+
+function wireSimLab() {
+  $("#simlab-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const status = $("#sim-status");
+    const submit = $("#sim-submit");
+    submit.disabled = true;
+    submit.textContent = "Generating…";
+    status.hidden = true;
+    try {
+      const payload = {
+        name: $("#sim-name").value.trim(),
+        employees: Number($("#sim-employees").value),
+        days: Number($("#sim-days").value),
+        bad_actors: Number($("#sim-bad").value),
+        seed: Number($("#sim-seed").value),
+      };
+      const result = await api("/api/simulations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      status.hidden = false;
+      status.className = "empty ok";
+      status.textContent = `Generated "${result.name}": ${result.scan.employees_seen} employees, ` +
+        `${result.scan.flags_raised} flags raised. It's now selectable in the dataset switcher.`;
+      $("#sim-name").value = "";
+      await loadDatasets();
+      await loadSimCompare();
+    } catch (err) {
+      status.hidden = false;
+      status.className = "empty bad";
+      status.textContent = `Could not generate: ${err.message}`;
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "Generate & scan";
+    }
   });
 }
 
@@ -600,6 +971,8 @@ function wireTabs() {
       if (tab.dataset.tab === "audit") loadAudit();
       if (tab.dataset.tab === "flags") loadFlags();
       if (tab.dataset.tab === "metrics") loadMetrics();
+      if (tab.dataset.tab === "analytics") loadAnalytics();
+      if (tab.dataset.tab === "simlab") loadSimCompare();
     });
   });
   $("#bell-btn").addEventListener("click", () => goToTab("flags"));
@@ -617,6 +990,18 @@ function wireFilters() {
     state.statusFilter = chip.dataset.status;
     renderEmployees();
   });
+  $("#role-filter").addEventListener("change", (ev) => {
+    state.roleFilter = ev.target.value;
+    renderEmployees();
+  });
+  $("#store-filter").addEventListener("change", (ev) => {
+    state.storeFilter = ev.target.value;
+    renderEmployees();
+  });
+  $("#risk-filter").addEventListener("change", (ev) => {
+    state.riskFilter = ev.target.value;
+    renderEmployees();
+  });
   $("#flag-filters").addEventListener("click", (ev) => {
     const chip = ev.target.closest(".chip");
     if (!chip) return;
@@ -625,15 +1010,41 @@ function wireFilters() {
     state.flagState = chip.dataset.state;
     loadFlags();
   });
+  $("#flag-sort").addEventListener("change", (ev) => {
+    state.flagSort = ev.target.value;
+    loadFlags();
+  });
+  $("#audit-filters").addEventListener("click", (ev) => {
+    const chip = ev.target.closest(".chip");
+    if (!chip) return;
+    $("#audit-filters").querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
+    chip.classList.add("active");
+    state.auditKind = chip.dataset.kind;
+    renderAuditTable();
+  });
+  $("#audit-verify-btn").addEventListener("click", async () => {
+    const btn = $("#audit-verify-btn");
+    btn.disabled = true;
+    btn.textContent = "Verifying…";
+    try {
+      const v = await api("/api/audit/verify");
+      renderAuditVerification(v);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Verify now";
+    }
+  });
   $("#search").addEventListener("input", (ev) => {
     state.search = ev.target.value;
     renderEmployees();
   });
+  $("#dataset-select").addEventListener("change", (ev) => activateDataset(ev.target.value));
 }
 
 async function init() {
   wireTabs();
   wireFilters();
+  wireSimLab();
   $("#drawer-close").addEventListener("click", closeDrawer);
   $("#drawer-backdrop").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
@@ -665,6 +1076,7 @@ async function init() {
     }
   } catch (_) { /* labels are cosmetic */ }
 
+  await loadDatasets();
   await loadOverview();
   await loadEmployees();
   await loadRecentActivity();

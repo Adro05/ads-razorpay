@@ -1,0 +1,31 @@
+{
+  "generated_at": "2026-09-02T19:15:30",
+  "as_of": "2026-09-02T19:00:00",
+  "seed": 1,
+  "days": 90,
+  "employees": 20,
+  "labelled": {
+    "EMP-1004": {
+      "name": "Kwame Novak",
+      "role": "Cashier",
+      "store_id": "6",
+      "pattern": "refund_mill",
+      "onset": "2026-08-23T19:00:00"
+    },
+    "EMP-1011": {
+      "name": "Bea Ricci",
+      "role": "Shift Supervisor",
+      "store_id": "6",
+      "pattern": "void_skimmer",
+      "onset": "2026-08-22T19:00:00"
+    },
+    "EMP-1014": {
+      "name": "Mei Demir",
+      "role": "Shift Supervisor",
+      "store_id": "6",
+      "pattern": "discount_abuse",
+      "onset": "2026-08-19T19:00:00"
+    }
+  },
+  "note": "Ground truth is for evaluation only. The detector never reads this file."
+}

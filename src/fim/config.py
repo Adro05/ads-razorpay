@@ -43,6 +43,10 @@ DEFAULTS: Dict[str, Any] = {
     },
     "features": {"enabled": None},  # None => every registered feature
     "review": {"decisions": ["confirmed_issue", "cleared", "needs_more_info", "escalated"]},
+    # Named alternative (events_csv, db_path, ground_truth_json) triples the
+    # dashboard can switch between at runtime. Empty by default so a bare
+    # config still behaves exactly as before; see api.py's /api/datasets.
+    "datasets": {},
 }
 
 

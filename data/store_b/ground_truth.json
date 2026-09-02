@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-09-02T18:57:29",
+  "as_of": "2026-09-02T18:00:00",
+  "seed": 23,
+  "days": 100,
+  "employees": 16,
+  "labelled": {
+    "EMP-1006": {
+      "name": "Naomi Duarte",
+      "role": "Returns Desk",
+      "store_id": "STORE-B",
+      "pattern": "discount_abuse",
+      "onset": "2026-08-24T18:00:00"
+    },
+    "EMP-1010": {
+      "name": "Sam Byrne",
+      "role": "Shift Supervisor",
+      "store_id": "STORE-B",
+      "pattern": "refund_mill",
+      "onset": "2026-08-23T18:00:00"
+    }
+  },
+  "note": "Ground truth is for evaluation only. The detector never reads this file."
+}
